@@ -1,0 +1,110 @@
+classDiagram
+    class WorkOrder {
+        +Int id
+        +String orderNo
+        +Int customerId
+        +Int contactId
+        +String contactPhone
+        +String staffNames
+        +String description
+        +Decimal laborCost
+        +Decimal materialCost
+        +Decimal travelCost
+        +Decimal totalAmount
+        +Boolean isPaid
+        +Boolean isDeleted
+        +DateTime? startTime
+        +DateTime? endTime
+        +Int createdBy
+        +Int? updatedBy
+        +DateTime createdAt
+        +DateTime updatedAt
+    }
+
+    class WorkOrderFile {
+        +Int id
+        +Int workOrderId
+        +String fileName
+        +String originalName
+        +String filePath
+        +String fileType
+        +Int fileSize
+        +Int uploadedBy
+        +DateTime createdAt
+    }
+
+    class User {
+        +Int id
+        +String username
+        +String displayName
+        +uploadedFiles WorkOrderFile[]
+    }
+
+    class WorkOrderService {
+        +toWorkOrderDTO(wo) WorkOrderDTO
+        +getWorkOrders(query, authUser) PaginatedResult
+        +getWorkOrderById(id, authUser) WorkOrderDTO
+        +createWorkOrder(data, authUser) WorkOrderDTO
+        +updateWorkOrder(id, data, authUser) WorkOrderDTO
+        +deleteWorkOrder(id) void
+        +getRecentWorkOrders(limit, authUser) WorkOrderDTO[]
+    }
+
+    class WorkOrderFileService {
+        +uploadFile(workOrderId, file, authUser) WorkOrderFileDTO
+        +getFiles(workOrderId) WorkOrderFileDTO[]
+        +downloadFile(workOrderId, fileId) FilePath
+        +deleteFile(workOrderId, fileId) void
+    }
+
+    class SummaryService {
+        +getOverview(authUser) OverviewSummary
+        +getComposite(query, authUser) CompositeResult
+        +getStaffSummary() StaffSummaryItem[]
+        +getDashboardData(authUser) DashboardData
+    }
+
+    class DashboardData {
+        +OverviewSummary overview
+        +Array~MonthlyTrendItem~ monthlyTrend
+        +CostBreakdown costBreakdown
+        +Array~CustomerRankingItem~ customerRanking
+        +Array~TableStatItem~ tableStats
+    }
+
+    class MonthlyTrendItem {
+        +String month
+        +number amount
+        +number count
+    }
+
+    class CostBreakdown {
+        +number laborCost
+        +number materialCost
+        +number travelCost
+        +number totalCost
+    }
+
+    class CustomerRankingItem {
+        +number customerId
+        +String customerName
+        +number totalAmount
+        +number orderCount
+    }
+
+    class TableStatItem {
+        +String tableName
+        +String displayName
+        +number recordCount
+    }
+
+    WorkOrder "1" --> "*" WorkOrderFile : files
+    WorkOrderFile "*" --> "1" WorkOrder : workOrder
+    WorkOrderFile "*" --> "1" User : uploader
+    WorkOrderService --> WorkOrder : manages
+    WorkOrderFileService --> WorkOrderFile : manages
+    SummaryService --> DashboardData : produces
+    DashboardData --> MonthlyTrendItem
+    DashboardData --> CostBreakdown
+    DashboardData --> CustomerRankingItem
+    DashboardData --> TableStatItem

@@ -1,0 +1,166 @@
+// Prisma Schema for After-Sales Work Order Management System
+
+generator client {
+  provider = "prisma-client-js"
+  // debian-openssl-3.0.x 对应生产镜像 node:20-slim (Debian bookworm)
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ========== Role ==========
+model Role {
+  id          Int      @id @default(autoincrement())
+  name        String   @unique @db.VarChar(50)
+  description String?  @db.VarChar(200)
+  permissions Json     @default("[]")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  users       User[]
+
+  @@map("roles")
+}
+
+// ========== User ==========
+model User {
+  id                 Int       @id @default(autoincrement())
+  username           String    @unique @db.VarChar(50)
+  passwordHash       String    @map("password_hash") @db.VarChar(255)
+  displayName        String    @map("display_name") @db.VarChar(50)
+  phone              String?   @db.VarChar(20)
+  roleId             Int       @map("role_id")
+  status             String    @default("active") @db.VarChar(20)
+  mustChangePassword Boolean   @default(true) @map("must_change_password")
+  failedLoginCount   Int       @default(0) @map("failed_login_count")
+  lockedUntil        DateTime? @map("locked_until")
+  lastLoginAt        DateTime? @map("last_login_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  role               Role      @relation(fields: [roleId], references: [id])
+  workOrdersCreated  WorkOrder[] @relation("WorkOrderCreatedBy")
+  workOrdersUpdated  WorkOrder[] @relation("WorkOrderUpdatedBy")
+
+  // FEAT-3: uploaded files reverse relation
+  uploadedFiles      WorkOrderFile[] @relation("WorkOrderFileUploadedBy")
+
+  @@map("users")
+}
+
+// ========== AfterSalesStaff ==========
+model AfterSalesStaff {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(50)
+  phone     String?  @db.VarChar(20)
+  status    String   @default("active") @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("after_sales_staff")
+}
+
+// ========== Customer ==========
+model Customer {
+  id         Int              @id @default(autoincrement())
+  name       String           @unique @db.VarChar(100)
+  status     String           @default("active") @db.VarChar(20)
+  createdAt  DateTime         @default(now()) @map("created_at")
+  updatedAt  DateTime         @updatedAt @map("updated_at")
+  contacts   CustomerContact[]
+  workOrders WorkOrder[]
+
+  @@map("customers")
+}
+
+// ========== CustomerContact ==========
+model CustomerContact {
+  id         Int      @id @default(autoincrement())
+  customerId Int      @map("customer_id")
+  name       String   @db.VarChar(50)
+  phone      String?  @db.VarChar(20)
+  status     String   @default("active") @db.VarChar(20)
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+  customer   Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  workOrders WorkOrder[]
+
+  @@map("customer_contacts")
+  @@index([customerId])
+}
+
+// ========== WorkOrder ==========
+model WorkOrder {
+  id           Int             @id @default(autoincrement())
+  orderNo      String          @unique @map("order_no") @db.VarChar(20)
+  customerId   Int             @map("customer_id")
+  contactId    Int             @map("contact_id")
+  contactPhone String?         @map("contact_phone") @db.VarChar(20)
+  staffNames   String          @map("staff_names") @db.Text
+  description  String          @db.Text
+  laborCost    Decimal         @default(0) @map("labor_cost") @db.Decimal(10, 2)
+  materialCost Decimal         @default(0) @map("material_cost") @db.Decimal(10, 2)
+  travelCost   Decimal         @default(0) @map("travel_cost") @db.Decimal(10, 2)
+  totalAmount  Decimal         @default(0) @map("total_amount") @db.Decimal(10, 2)
+  isPaid       Boolean         @default(false) @map("is_paid")
+  isDeleted    Boolean         @default(false) @map("is_deleted")
+
+  // FEAT-2: service start/end time
+  startTime    DateTime?       @map("start_time")
+  endTime      DateTime?       @map("end_time")
+
+  createdBy    Int             @map("created_by")
+  updatedBy    Int?            @map("updated_by")
+  createdAt    DateTime        @default(now()) @map("created_at")
+  updatedAt    DateTime        @updatedAt @map("updated_at")
+  customer     Customer        @relation(fields: [customerId], references: [id])
+  contact      CustomerContact @relation(fields: [contactId], references: [id])
+  creator      User            @relation("WorkOrderCreatedBy", fields: [createdBy], references: [id])
+  updater      User?           @relation("WorkOrderUpdatedBy", fields: [updatedBy], references: [id])
+
+  // FEAT-3: associated files
+  files        WorkOrderFile[]
+
+  @@map("work_orders")
+  @@index([customerId])
+  @@index([contactId])
+  @@index([isPaid])
+  @@index([isDeleted])
+  @@index([createdAt])
+}
+
+// ========== OperationLog (P2) ==========
+model OperationLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  action    String   @db.VarChar(50)
+  module    String   @db.VarChar(50)
+  targetId  Int?     @map("target_id")
+  detail    String?  @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("operation_logs")
+  @@index([userId])
+  @@index([createdAt])
+}
+
+// ========== WorkOrderFile (FEAT-3) ==========
+model WorkOrderFile {
+  id           Int      @id @default(autoincrement())
+  workOrderId  Int      @map("work_order_id")
+  fileName     String   @map("file_name") @db.VarChar(255)
+  originalName String   @map("original_name") @db.VarChar(255)
+  filePath     String   @map("file_path") @db.VarChar(500)
+  fileType     String   @map("file_type") @db.VarChar(255)
+  fileSize     Int      @map("file_size")
+  uploadedBy   Int      @map("uploaded_by")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  workOrder    WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  uploader     User      @relation("WorkOrderFileUploadedBy", fields: [uploadedBy], references: [id])
+
+  @@map("work_order_files")
+  @@index([workOrderId])
+  @@index([uploadedBy])
+}

@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: workorder-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-workorder_db}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+
+  server:
+    build: ./server
+    container_name: workorder-server
+    environment:
+      DATABASE_URL: mysql://root:${MYSQL_ROOT_PASSWORD:-rootpassword}@mysql:3306/${MYSQL_DATABASE:-workorder_db}
+      JWT_SECRET: ${JWT_SECRET:-your-super-secret-key-at-least-32-chars-long}
+      JWT_EXPIRES_IN: 8h
+      PORT: 3000
+      CLIENT_URL: http://localhost:8080
+      BCRYPT_SALT_ROUNDS: 10
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  client:
+    build: ./client
+    container_name: workorder-client
+    ports:
+      - "8080:80"
+    depends_on:
+      - server
+    networks:
+      - app-network
+
+volumes:
+  mysql_data:
+
+networks:
+  app-network:
+    driver: bridge

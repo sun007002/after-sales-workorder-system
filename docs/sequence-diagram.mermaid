@@ -1,0 +1,88 @@
+sequenceDiagram
+    participant FE as DashboardPage
+    participant SA as summary.api
+    participant SR as summary.routes
+    participant SC as summary.controller
+    participant SS as summary.service
+    participant DB as Prisma/MySQL
+
+    FE->>SA: getDashboardData()
+    SA->>SR: GET /api/summary/dashboard
+    SR->>SR: authMiddleware (JWT 验证)
+    SR->>SR: requirePermission('summary:view')
+    SR->>SC: getDashboard(req, res)
+    SC->>SS: getDashboardData(authUser)
+    
+    par 并行查询 5 组数据
+        SS->>DB: aggregate (overview: count + sum)
+        SS->>DB: groupBy (monthlyTrend: 按月分组)
+        SS->>DB: aggregate (costBreakdown: 三项费用 sum)
+        SS->>DB: groupBy (customerRanking: 按客户分组 Top10)
+        SS->>DB: $queryRaw (tableStats: 7张表 COUNT)
+    end
+    
+    SS->>SS: 月度趋势补零 (12个月)
+    SS-->>SC: DashboardData
+    SC-->>SR: sendSuccess(res, data)
+    SR-->>SA: { code:200, data, message }
+    SA-->>FE: DashboardData
+    FE->>FE: 渲染 4 卡片 + 4 图表
+
+    participant FE2 as WorkOrderDetail
+    participant FZ as FileUploadZone
+    participant WA as workOrder.api
+    participant WR as workOrder.routes
+    participant FC as workOrderFile.controller
+    participant FS as workOrderFile.service
+    participant DB2 as Prisma/MySQL
+    participant FS2 as File System
+
+    FE2->>FZ: 用户拖拽/选择文件
+    FZ->>WA: uploadFile(workOrderId, file)
+    WA->>WR: POST /api/work-orders/:id/files (multipart)
+    WR->>WR: authMiddleware + requirePermission('workorder:update')
+    WR->>WR: multer.single('file') 解析上传
+    WR->>FC: uploadFile(req, res)
+    FC->>FS: uploadFile(workOrderId, file, authUser)
+    
+    FS->>DB2: 验证工单存在
+    FS->>DB2: COUNT 现有文件数 (≤20)
+    FS->>FS: 校验文件类型 + 大小
+    FS->>FS: 生成 UUID 文件名
+    FS->>FS: 确保目录 uploads/work_orders/:id/ 存在
+    FS->>FS: 移动 multer 临时文件到目标路径
+    FS->>DB2: prisma.workOrderFile.create()
+    DB2-->>FS: WorkOrderFile (含 uploader 关联)
+    FS-->>FC: WorkOrderFileDTO
+    FC-->>WR: sendSuccess(res, dto, 201)
+    WR-->>WA: { code:201, data, message }
+    WA-->>FZ: WorkOrderFileDTO
+    FZ->>FE2: 上传成功回调
+    FE2->>FE2: 刷新文件列表
+
+    participant FE3 as WorkOrderForm
+    participant WA2 as workOrder.api
+    participant WR2 as workOrder.routes
+    participant WC as workOrder.controller
+    participant WS as workOrder.service
+    participant DB3 as Prisma/MySQL
+
+    FE3->>FE3: 前端校验 startTime ≤ endTime
+    FE3->>WA2: createWorkOrder({ ...data, startTime, endTime })
+    WA2->>WR2: POST /api/work-orders
+    WR2->>WR2: authMiddleware + requirePermission('workorder:create')
+    WR2->>WC: createWorkOrder(req, res)
+    WC->>WS: createWorkOrder(req.body, authUser)
+    WS->>WS: 验证 customer/contact 存在
+    WS->>WS: 验证 staffNames 非空
+    WS->>WS: 验证 description 长度
+    WS->>WS: 验证 cost 合法性
+    WS->>WS: 校验 startTime ≤ endTime (若两者都有值)
+    WS->>DB3: prisma.workOrder.create({ ...startTime, endTime })
+    DB3-->>WS: WorkOrder (含 relations)
+    WS->>WS: toWorkOrderDTO(workOrder)
+    WS-->>WC: WorkOrderDTO
+    WC-->>WR2: sendSuccess(res, dto, 201)
+    WR2-->>WA2: { code:201, data, message }
+    WA2-->>FE3: WorkOrder
+    FE3->>FE3: onSuccess() 跳转
