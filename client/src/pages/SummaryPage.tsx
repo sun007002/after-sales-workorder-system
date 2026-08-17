@@ -128,6 +128,117 @@ const SummaryPage: React.FC = () => {
     }
   }, [customerId, startDate, endDate, isPaid, enqueueSnackbar]);
 
+  /** Escapes text for safe injection into the print document. */
+  const escapeHtml = (value: unknown): string =>
+    String(value ?? '').replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string),
+    );
+
+  /**
+   * Exports the current composite query result as a PDF via the browser's
+   * print dialog (Save as PDF). This renders Chinese text using system fonts,
+   * avoiding embedded-font issues.
+   */
+  const handleExportPdf = useCallback(() => {
+    if (!composite || composite.items.length === 0) {
+      enqueueSnackbar('暂无可导出的数据', { variant: 'warning' });
+      return;
+    }
+
+    const customerName = customerId
+      ? customers.find((c) => String(c.id) === String(customerId))?.name ?? ''
+      : '全部客户';
+    const paidLabel = isPaid === 'true' ? '已结款' : isPaid === 'false' ? '未结款' : '全部';
+    const dateRange =
+      startDate || endDate ? `${startDate || '不限'} ~ ${endDate || '不限'}` : '全部';
+    const exportedAt = formatDateTime(new Date().toISOString());
+
+    const rows = composite.items
+      .map(
+        (item) => `
+        <tr${item.isPaid ? '' : ' class="unpaid"'}>
+          <td>${escapeHtml(item.orderNo)}</td>
+          <td>${escapeHtml(item.customerName)}</td>
+          <td>${escapeHtml(item.contactName)}</td>
+          <td>${escapeHtml(item.staffNames)}</td>
+          <td class="num">${escapeHtml(formatCurrency(item.laborCost))}</td>
+          <td class="num">${escapeHtml(formatCurrency(item.materialCost))}</td>
+          <td class="num">${escapeHtml(formatCurrency(item.travelCost))}</td>
+          <td class="num b">${escapeHtml(formatCurrency(item.totalAmount))}</td>
+          <td class="c">${item.isPaid ? '已结款' : '未结款'}</td>
+          <td>${escapeHtml(formatDateTime(item.createdAt))}</td>
+          <td>${escapeHtml(formatDate(item.startTime))}</td>
+        </tr>`,
+      )
+      .join('');
+
+    const summaryRow = `
+      <tr class="sum">
+        <td colspan="4">合计（${composite.summary.count} 单）</td>
+        <td class="num">${escapeHtml(formatCurrency(composite.summary.totalLaborCost))}</td>
+        <td class="num">${escapeHtml(formatCurrency(composite.summary.totalMaterialCost))}</td>
+        <td class="num">${escapeHtml(formatCurrency(composite.summary.totalTravelCost))}</td>
+        <td class="num b">${escapeHtml(formatCurrency(composite.summary.totalAmount))}</td>
+        <td colspan="3">未结款：${escapeHtml(formatCurrency(composite.summary.unpaidAmount))}</td>
+      </tr>`;
+
+    const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>组合查询_${exportedAt.replace(/[^0-9]/g, '').slice(0, 12)}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif; color: #1a1a1a; margin: 24px; }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .meta { font-size: 12px; color: #555; margin-bottom: 12px; line-height: 1.6; }
+  .meta span { margin-right: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  th, td { border: 1px solid #bbb; padding: 4px 6px; text-align: left; }
+  th { background: #f0f2f5; font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  td.c { text-align: center; }
+  td.b { font-weight: 700; }
+  tr.unpaid td { background: #fff4f4; }
+  tr.sum td { background: #eef1f5; font-weight: 700; }
+  @media print { body { margin: 12mm; } }
+</style>
+</head>
+<body>
+  <h1>组合查询结果</h1>
+  <div class="meta">
+    <span>客户：${escapeHtml(customerName)}</span>
+    <span>日期：${escapeHtml(dateRange)}</span>
+    <span>结款状态：${escapeHtml(paidLabel)}</span>
+    <span>导出时间：${escapeHtml(exportedAt)}</span>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>工单编号</th><th>客户</th><th>联系人</th><th>售后人员</th>
+        <th>人工费</th><th>材料费</th><th>交通差旅费</th><th>合计</th>
+        <th>结款状态</th><th>录入时间</th><th>开始日期</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows}
+      ${summaryRow}
+    </tbody>
+  </table>
+  <script>window.onload = function () { window.focus(); window.print(); };</script>
+</body>
+</html>`;
+
+    const win = window.open('', '_blank');
+    if (!win) {
+      enqueueSnackbar('无法打开打印窗口，请检查浏览器弹窗拦截设置', { variant: 'error' });
+      return;
+    }
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+  }, [composite, customerId, customers, isPaid, startDate, endDate, enqueueSnackbar]);
+
   /** Loads composite query on mount to show all data by default. */
   useEffect(() => {
     handleQuery();
@@ -291,6 +402,17 @@ const SummaryPage: React.FC = () => {
                 disabled={exportLoading}
               >
                 {exportLoading ? '导出中...' : '导出 Excel'}
+              </Button>
+            </Grid>
+            <Grid item xs={6} md={1.5}>
+              <Button
+                fullWidth
+                variant="outlined"
+                color="secondary"
+                onClick={handleExportPdf}
+                size="small"
+              >
+                导出 PDF
               </Button>
             </Grid>
           </Grid>
