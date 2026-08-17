@@ -10,10 +10,13 @@ cd "$REPO_ROOT"
 MYSQL_PASSWORD="rootpassword"
 MYSQL_DB="workorder_db"
 
-# Keep MySQL's memory footprint small so it survives the build container's
-# tight cgroup memory limit (default buffers get the daemon OOM-killed).
+# MySQL runs on the container's overlay filesystem, which does not support
+# InnoDB's native async I/O or O_DIRECT (fails with OS error 22 / EINVAL), so
+# disable native AIO and use fsync flushing. Small buffers keep memory low.
 MYSQLD_ARGS=(
   --user=mysql
+  --innodb-use-native-aio=0
+  --innodb-flush-method=fsync
   --innodb-buffer-pool-size=64M
   --innodb-buffer-pool-instances=1
   --performance-schema=OFF

@@ -20,8 +20,12 @@ sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
            /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
 
 echo "Starting MySQL (foreground)..."
+# Disable InnoDB native AIO / O_DIRECT: the container's overlay filesystem
+# does not support them (OS error 22). Small buffers keep memory low.
 exec sudo mysqld \
   --user=mysql \
+  --innodb-use-native-aio=0 \
+  --innodb-flush-method=fsync \
   --innodb-buffer-pool-size=64M \
   --innodb-buffer-pool-instances=1 \
   --performance-schema=OFF \
