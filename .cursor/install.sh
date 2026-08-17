@@ -26,25 +26,28 @@ if ! port_open; then
   sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
              /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
              /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
-  sudo rm -f /var/log/mysql/manual-start.log 2>/dev/null || true
+  rm -f /tmp/mysqld-setup.log 2>/dev/null || true
   echo "Starting mysqld for setup..."
-  # Launch mysqld as root (so it can write its log under /var/log/mysql) and
-  # fully redirect its fds inside the root shell, then background it there so
-  # it is reparented to init. This keeps it off this script's stdout pipe
-  # (avoids hanging the build's output capture) and off --daemonize (which
-  # fails with MY-011065 in nested containers).
-  sudo bash -c 'nohup mysqld --user=mysql >/var/log/mysql/manual-start.log 2>&1 </dev/null &'
+  # Launch mysqld as a DIRECT child of this script (same process group): the
+  # build's process supervisor reaps processes that escape the install command
+  # via setsid/--daemonize/orphaning, so those approaches never start. stdout
+  # and stderr go to a user-writable log so the daemon never keeps this
+  # script's stdout pipe open (which would hang the build's output capture).
+  sudo mysqld --user=mysql >/tmp/mysqld-setup.log 2>&1 </dev/null &
+  MYSQLD_PID=$!
   started=""
   for i in $(seq 1 120); do
     if port_open; then started="yes"; echo "mysqld ready after ${i}s"; break; fi
+    if ! kill -0 "$MYSQLD_PID" 2>/dev/null; then
+      echo "mysqld process exited early." >&2
+      break
+    fi
     sleep 1
   done
   if [ -z "$started" ]; then
     echo "mysqld failed to start within 120s." >&2
-    echo "--- /var/log/mysql/manual-start.log ---" >&2
-    sudo cat /var/log/mysql/manual-start.log >&2 2>/dev/null || echo "(no manual-start.log)" >&2
-    echo "--- /var/log/mysql/error.log (tail) ---" >&2
-    sudo tail -n 30 /var/log/mysql/error.log >&2 2>/dev/null || true
+    echo "--- /tmp/mysqld-setup.log ---" >&2
+    cat /tmp/mysqld-setup.log >&2 2>/dev/null || echo "(empty)" >&2
     exit 1
   fi
 fi
