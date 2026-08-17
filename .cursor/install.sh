@@ -10,6 +10,17 @@ cd "$REPO_ROOT"
 MYSQL_PASSWORD="rootpassword"
 MYSQL_DB="workorder_db"
 
+# Keep MySQL's memory footprint small so it survives the build container's
+# tight cgroup memory limit (default buffers get the daemon OOM-killed).
+MYSQLD_ARGS=(
+  --user=mysql
+  --innodb-buffer-pool-size=64M
+  --innodb-buffer-pool-instances=1
+  --performance-schema=OFF
+  --skip-mysqlx
+  --log-error=/tmp/mysqld.log
+)
+
 # --- 1. Ensure MySQL server is installed (stable system dependency) ---
 if ! command -v mysqld >/dev/null 2>&1; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
@@ -26,14 +37,14 @@ if ! port_open; then
   sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
              /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
              /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
-  rm -f /tmp/mysqld-setup.log 2>/dev/null || true
+  sudo rm -f /tmp/mysqld.log 2>/dev/null || true
   echo "Starting mysqld for setup..."
   # Launch mysqld as a DIRECT child of this script (same process group): the
   # build's process supervisor reaps processes that escape the install command
-  # via setsid/--daemonize/orphaning, so those approaches never start. stdout
-  # and stderr go to a user-writable log so the daemon never keeps this
-  # script's stdout pipe open (which would hang the build's output capture).
-  sudo mysqld --user=mysql >/tmp/mysqld-setup.log 2>&1 </dev/null &
+  # via setsid/--daemonize/orphaning. stdout/stderr go to a user-writable log
+  # so the daemon never keeps this script's stdout pipe open (which would hang
+  # the build's output capture); --log-error captures startup diagnostics.
+  sudo mysqld "${MYSQLD_ARGS[@]}" >/tmp/mysqld-stdio.log 2>&1 </dev/null &
   MYSQLD_PID=$!
   started=""
   for i in $(seq 1 120); do
@@ -46,8 +57,10 @@ if ! port_open; then
   done
   if [ -z "$started" ]; then
     echo "mysqld failed to start within 120s." >&2
-    echo "--- /tmp/mysqld-setup.log ---" >&2
-    cat /tmp/mysqld-setup.log >&2 2>/dev/null || echo "(empty)" >&2
+    echo "--- /tmp/mysqld.log (error log) ---" >&2
+    sudo cat /tmp/mysqld.log >&2 2>/dev/null || echo "(empty)" >&2
+    echo "--- /tmp/mysqld-stdio.log ---" >&2
+    cat /tmp/mysqld-stdio.log >&2 2>/dev/null || echo "(empty)" >&2
     exit 1
   fi
 fi

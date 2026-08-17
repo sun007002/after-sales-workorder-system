@@ -2,12 +2,16 @@
   "name": "After-Sales Work Order System",
   "user": "ubuntu",
   "install": "bash .cursor/install.sh",
-  "start": "bash .cursor/start.sh",
   "terminals": [
     {
+      "name": "mysql",
+      "command": "bash .cursor/run-mysql.sh",
+      "description": "MySQL 8 server (foreground) on 127.0.0.1:3306"
+    },
+    {
       "name": "backend",
-      "command": "cd server && npm run dev",
-      "description": "Express + Prisma API on http://localhost:3000 (nodemon)"
+      "command": "bash .cursor/run-backend.sh",
+      "description": "Express + Prisma API on http://localhost:3000 (waits for MySQL, then nodemon)"
     },
     {
       "name": "frontend",
