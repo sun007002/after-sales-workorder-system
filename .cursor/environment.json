@@ -1,0 +1,26 @@
+{
+  "name": "After-Sales Work Order System",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "mysql",
+      "command": "bash .cursor/run-mysql.sh",
+      "description": "MySQL 8 server (foreground) on 127.0.0.1:3306"
+    },
+    {
+      "name": "backend",
+      "command": "bash .cursor/run-backend.sh",
+      "description": "Express + Prisma API on http://localhost:3000 (waits for MySQL, then nodemon)"
+    },
+    {
+      "name": "frontend",
+      "command": "cd client && npm run dev",
+      "description": "Vite React dev server on http://localhost:5173 (proxies /api to :3000)"
+    }
+  ],
+  "ports": [
+    { "name": "frontend", "port": 5173 },
+    { "name": "backend", "port": 3000 }
+  ]
+}

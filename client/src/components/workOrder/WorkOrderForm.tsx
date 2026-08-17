@@ -14,6 +14,8 @@ import {
   Autocomplete,
   Typography,
   InputAdornment,
+  IconButton,
+  Tooltip,
   CircularProgress,
   FormControlLabel,
   Switch,
@@ -21,12 +23,17 @@ import {
   AlertTitle,
   Divider,
 } from '@mui/material';
+import CalculateIcon from '@mui/icons-material/Calculate';
+import AddIcon from '@mui/icons-material/Add';
 import { useSnackbar } from 'notistack';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
-import { getCustomerList } from '../../api/customer.api';
-import { getContacts } from '../../api/customer.api';
-import { getStaffList } from '../../api/staff.api';
+import CalculatorPopover from '../common/CalculatorPopover';
+import CustomerDialog from '../basicData/CustomerDialog';
+import ContactDialog from '../basicData/ContactDialog';
+import StaffDialog from '../basicData/StaffDialog';
+import { getCustomerList, getContacts, createCustomer, createContact } from '../../api/customer.api';
+import { getStaffList, createStaff } from '../../api/staff.api';
 import {
   createWorkOrder,
   updateWorkOrder,
@@ -48,6 +55,9 @@ export interface WorkOrderFormProps {
   onCancel: () => void;
 }
 
+/** Current local time formatted for a datetime-local input. */
+const nowLocalDateTime = (): string => dayjs().format('YYYY-MM-DDTHH:mm');
+
 /**
  * Work order form with customer→contact cascade, auto-fill phone,
  * auto-calculate total amount, and multi-select staff.
@@ -62,7 +72,8 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
   const [contactId, setContactId] = useState<number | null>(null);
   const [contactPhone, setContactPhone] = useState('');
   const [staffNames, setStaffNames] = useState<string[]>([]);
-  const [startTime, setStartTime] = useState('');
+  // New work orders default the start time to now; edit mode loads the saved value.
+  const [startTime, setStartTime] = useState(isEdit ? '' : nowLocalDateTime());
   const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
   const [laborCost, setLaborCost] = useState('0');
@@ -73,6 +84,15 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
   const [createdAt, setCreatedAt] = useState('');
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(isEdit);
+
+  // Calculator popover state: anchor element and which cost field it targets.
+  const [calcAnchor, setCalcAnchor] = useState<HTMLElement | null>(null);
+  const [calcTarget, setCalcTarget] = useState<'labor' | 'material' | 'travel' | null>(null);
+
+  // Quick-create dialog state for customer / contact / staff.
+  const [customerDialogOpen, setCustomerDialogOpen] = useState(false);
+  const [contactDialogOpen, setContactDialogOpen] = useState(false);
+  const [staffDialogOpen, setStaffDialogOpen] = useState(false);
 
   // Post-create attachment state (Bug 2: upload files on the create page).
   const [createdId, setCreatedId] = useState<number | null>(null);
@@ -169,7 +189,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
     setContactId(null);
     setContactPhone('');
     setStaffNames([]);
-    setStartTime('');
+    setStartTime(nowLocalDateTime());
     setEndTime('');
     setDescription('');
     setLaborCost('0');
@@ -225,6 +245,65 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
     if (contact) {
       setContactPhone(contact.phone || '');
     }
+  };
+
+  /** Opens the calculator popover for a specific cost field. */
+  const openCalculator = (
+    event: React.MouseEvent<HTMLElement>,
+    target: 'labor' | 'material' | 'travel',
+  ) => {
+    setCalcAnchor(event.currentTarget);
+    setCalcTarget(target);
+  };
+
+  /** Renders the calculator icon adornment for a cost field. */
+  const calcAdornment = (target: 'labor' | 'material' | 'travel') => (
+    <InputAdornment position="end">
+      <Tooltip title="计算器">
+        <IconButton
+          edge="end"
+          size="small"
+          aria-label="打开计算器"
+          onClick={(e) => openCalculator(e, target)}
+        >
+          <CalculateIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </InputAdornment>
+  );
+
+  /** Applies the calculator result to the currently targeted cost field. */
+  const applyCalcResult = (value: string) => {
+    const num = String(Math.min(parseFloat(value) || 0, MAX_COST));
+    if (calcTarget === 'labor') setLaborCost(num);
+    else if (calcTarget === 'material') setMaterialCost(num);
+    else if (calcTarget === 'travel') setTravelCost(num);
+  };
+
+  /** Quick-creates a customer, then selects it. */
+  const handleCreateCustomer = async (data: { name: string }) => {
+    const created = await createCustomer(data);
+    setCustomers((prev) => [...prev, created]);
+    handleCustomerChange(created.id);
+    enqueueSnackbar('客户新增成功', { variant: 'success' });
+  };
+
+  /** Quick-creates a contact for the selected customer, then selects it. */
+  const handleCreateContact = async (data: { name: string; phone: string | null }) => {
+    if (!customerId) return;
+    const created = await createContact(customerId, data);
+    await loadContacts(customerId);
+    setContactId(created.id);
+    setContactPhone(created.phone || '');
+    enqueueSnackbar('联系人新增成功', { variant: 'success' });
+  };
+
+  /** Quick-creates a staff member, then adds them to the selection. */
+  const handleCreateStaff = async (data: { name: string; phone: string | null }) => {
+    const created = await createStaff(data);
+    setStaffList((prev) => [...prev, created]);
+    setStaffNames((prev) => (prev.includes(created.name) ? prev : [...prev, created.name]));
+    enqueueSnackbar('售后人员新增成功', { variant: 'success' });
   };
 
   /** Validates and submits the form. */
@@ -333,35 +412,56 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
       <Grid container spacing={2}>
         {/* Customer selection */}
         <Grid item xs={12} md={6}>
-          <TextField
-            fullWidth
-            select
-            required
-            label="客户名称"
-            value={customerId ?? ''}
-            onChange={(e) => handleCustomerChange(Number(e.target.value))}
-          >
-            {customers.map((c) => (
-              <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-            ))}
-          </TextField>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+            <TextField
+              sx={{ flex: 1 }}
+              select
+              required
+              label="客户名称"
+              value={customerId ?? ''}
+              onChange={(e) => handleCustomerChange(Number(e.target.value))}
+            >
+              {customers.map((c) => (
+                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setCustomerDialogOpen(true)}
+              sx={{ height: 40, flexShrink: 0, whiteSpace: 'nowrap' }}
+            >
+              新增
+            </Button>
+          </Box>
         </Grid>
 
         {/* Contact selection (cascaded from customer) */}
         <Grid item xs={12} md={6}>
-          <TextField
-            fullWidth
-            select
-            required
-            label="联系人"
-            value={contactId ?? ''}
-            onChange={(e) => handleContactChange(Number(e.target.value))}
-            disabled={!customerId}
-          >
-            {contacts.map((c) => (
-              <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
-            ))}
-          </TextField>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+            <TextField
+              sx={{ flex: 1 }}
+              select
+              required
+              label="联系人"
+              value={contactId ?? ''}
+              onChange={(e) => handleContactChange(Number(e.target.value))}
+              disabled={!customerId}
+            >
+              {contacts.map((c) => (
+                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setContactDialogOpen(true)}
+              disabled={!customerId}
+              sx={{ height: 40, flexShrink: 0, whiteSpace: 'nowrap' }}
+            >
+              新增
+            </Button>
+          </Box>
         </Grid>
 
         {/* Contact phone (auto-filled) */}
@@ -377,22 +477,33 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
 
         {/* Staff multi-select */}
         <Grid item xs={12} md={6}>
-          <Autocomplete
-            multiple
-            options={staffList}
-            getOptionLabel={(option) => option.name}
-            value={staffList.filter((s) => staffNames.includes(s.name))}
-            onChange={(_e, newValue) => setStaffNames(newValue.map((s) => s.name))}
-            renderInput={(params) => (
-              <TextField
-                {...params}
-                required
-                label="售后人员"
-                placeholder="选择售后人员"
-              />
-            )}
-            isOptionEqualToValue={(option, value) => option.id === value.id}
-          />
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start' }}>
+            <Autocomplete
+              sx={{ flex: 1 }}
+              multiple
+              options={staffList}
+              getOptionLabel={(option) => option.name}
+              value={staffList.filter((s) => staffNames.includes(s.name))}
+              onChange={(_e, newValue) => setStaffNames(newValue.map((s) => s.name))}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  required
+                  label="售后人员"
+                  placeholder="选择售后人员"
+                />
+              )}
+              isOptionEqualToValue={(option, value) => option.id === value.id}
+            />
+            <Button
+              variant="outlined"
+              startIcon={<AddIcon />}
+              onClick={() => setStaffDialogOpen(true)}
+              sx={{ height: 40, flexShrink: 0, whiteSpace: 'nowrap' }}
+            >
+              新增
+            </Button>
+          </Box>
         </Grid>
 
         {/* Start time */}
@@ -446,6 +557,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setLaborCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              endAdornment: calcAdornment('labor'),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
             }}
           />
@@ -459,6 +571,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setMaterialCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              endAdornment: calcAdornment('material'),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
             }}
           />
@@ -472,6 +585,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setTravelCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              endAdornment: calcAdornment('travel'),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
             }}
           />
@@ -510,6 +624,34 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
           </Box>
         </Grid>
       </Grid>
+
+      {/* Shared calculator popover for the cost fields (人工费/材料费/交通差旅费) */}
+      <CalculatorPopover
+        open={Boolean(calcAnchor)}
+        anchorEl={calcAnchor}
+        onClose={() => {
+          setCalcAnchor(null);
+          setCalcTarget(null);
+        }}
+        onConfirm={applyCalcResult}
+      />
+
+      {/* Quick-create dialogs */}
+      <CustomerDialog
+        open={customerDialogOpen}
+        onClose={() => setCustomerDialogOpen(false)}
+        onSubmit={handleCreateCustomer}
+      />
+      <ContactDialog
+        open={contactDialogOpen}
+        onClose={() => setContactDialogOpen(false)}
+        onSubmit={handleCreateContact}
+      />
+      <StaffDialog
+        open={staffDialogOpen}
+        onClose={() => setStaffDialogOpen(false)}
+        onSubmit={handleCreateStaff}
+      />
 
       {/* Action buttons */}
       <Box sx={{ display: 'flex', gap: 2, mt: 3, justifyContent: 'flex-end' }}>

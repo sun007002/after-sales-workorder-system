@@ -173,10 +173,6 @@ const LoginPage: React.FC = () => {
               {loading ? <CircularProgress size={24} color="inherit" /> : '登录'}
             </Button>
           </form>
-
-          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', textAlign: 'center', mt: 2 }}>
-            默认账号: admin / admin123
-          </Typography>
         </CardContent>
       </Card>
 
