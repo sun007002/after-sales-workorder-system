@@ -82,8 +82,9 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(isEdit);
 
-  // Anchor for the labor-cost calculator popover.
+  // Calculator popover state: anchor element and which cost field it targets.
   const [calcAnchor, setCalcAnchor] = useState<HTMLElement | null>(null);
+  const [calcTarget, setCalcTarget] = useState<'labor' | 'material' | 'travel' | null>(null);
 
   // Post-create attachment state (Bug 2: upload files on the create page).
   const [createdId, setCreatedId] = useState<number | null>(null);
@@ -236,6 +237,39 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
     if (contact) {
       setContactPhone(contact.phone || '');
     }
+  };
+
+  /** Opens the calculator popover for a specific cost field. */
+  const openCalculator = (
+    event: React.MouseEvent<HTMLElement>,
+    target: 'labor' | 'material' | 'travel',
+  ) => {
+    setCalcAnchor(event.currentTarget);
+    setCalcTarget(target);
+  };
+
+  /** Renders the calculator icon adornment for a cost field. */
+  const calcAdornment = (target: 'labor' | 'material' | 'travel') => (
+    <InputAdornment position="end">
+      <Tooltip title="计算器">
+        <IconButton
+          edge="end"
+          size="small"
+          aria-label="打开计算器"
+          onClick={(e) => openCalculator(e, target)}
+        >
+          <CalculateIcon fontSize="small" />
+        </IconButton>
+      </Tooltip>
+    </InputAdornment>
+  );
+
+  /** Applies the calculator result to the currently targeted cost field. */
+  const applyCalcResult = (value: string) => {
+    const num = String(Math.min(parseFloat(value) || 0, MAX_COST));
+    if (calcTarget === 'labor') setLaborCost(num);
+    else if (calcTarget === 'material') setMaterialCost(num);
+    else if (calcTarget === 'travel') setTravelCost(num);
   };
 
   /** Validates and submits the form. */
@@ -457,30 +491,8 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setLaborCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-              endAdornment: (
-                <InputAdornment position="end">
-                  <Tooltip title="计算器">
-                    <IconButton
-                      edge="end"
-                      size="small"
-                      aria-label="打开计算器"
-                      onClick={(e) => setCalcAnchor(e.currentTarget)}
-                    >
-                      <CalculateIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </InputAdornment>
-              ),
+              endAdornment: calcAdornment('labor'),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
-            }}
-          />
-          <CalculatorPopover
-            open={Boolean(calcAnchor)}
-            anchorEl={calcAnchor}
-            onClose={() => setCalcAnchor(null)}
-            onConfirm={(value) => {
-              const num = Math.min(parseFloat(value) || 0, MAX_COST);
-              setLaborCost(String(num));
             }}
           />
         </Grid>
@@ -493,6 +505,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setMaterialCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              endAdornment: calcAdornment('material'),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
             }}
           />
@@ -506,6 +519,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setTravelCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              endAdornment: calcAdornment('travel'),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
             }}
           />
@@ -544,6 +558,17 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
           </Box>
         </Grid>
       </Grid>
+
+      {/* Shared calculator popover for the cost fields (人工费/材料费/交通差旅费) */}
+      <CalculatorPopover
+        open={Boolean(calcAnchor)}
+        anchorEl={calcAnchor}
+        onClose={() => {
+          setCalcAnchor(null);
+          setCalcTarget(null);
+        }}
+        onConfirm={applyCalcResult}
+      />
 
       {/* Action buttons */}
       <Box sx={{ display: 'flex', gap: 2, mt: 3, justifyContent: 'flex-end' }}>
