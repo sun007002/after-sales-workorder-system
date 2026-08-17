@@ -31,49 +31,72 @@ if ! command -v mysqld >/dev/null 2>&1; then
 fi
 
 # --- 2. Ensure a MySQL instance is running for the setup steps below ---
-# /var/run is tmpfs (cleared each boot); recreate it and clear stale runtime
-# files that a snapshot may have captured while MySQL was running.
 port_open() { timeout 2 bash -c ': >/dev/tcp/127.0.0.1/3306' 2>/dev/null; }
-if ! port_open; then
+
+prepare_rundir() {
+  # /var/run is tmpfs (cleared each boot); recreate it and clear stale runtime
+  # files that a snapshot may have captured while MySQL was running.
   sudo mkdir -p /var/run/mysqld
   sudo chown mysql:mysql /var/run/mysqld
   sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
              /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
              /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
+}
+
+# Start mysqld as a DIRECT child of this script (same process group): the
+# build's process supervisor reaps processes that escape via
+# setsid/--daemonize/orphaning. Waits up to 60s for the port; returns 1 on
+# failure. All fds are redirected so the daemon never holds this script's
+# stdout pipe (which would hang the build's output capture).
+try_start_mysqld() {
   sudo rm -f /tmp/mysqld.log 2>/dev/null || true
-  echo "Starting mysqld for setup..."
-  # Launch mysqld as a DIRECT child of this script (same process group): the
-  # build's process supervisor reaps processes that escape the install command
-  # via setsid/--daemonize/orphaning. stdout/stderr go to a user-writable log
-  # so the daemon never keeps this script's stdout pipe open (which would hang
-  # the build's output capture); --log-error captures startup diagnostics.
   sudo mysqld "${MYSQLD_ARGS[@]}" >/tmp/mysqld-stdio.log 2>&1 </dev/null &
-  MYSQLD_PID=$!
-  started=""
-  for i in $(seq 1 120); do
-    if port_open; then started="yes"; echo "mysqld ready after ${i}s"; break; fi
-    if ! kill -0 "$MYSQLD_PID" 2>/dev/null; then
-      echo "mysqld process exited early." >&2
-      break
-    fi
+  local pid=$! i
+  for i in $(seq 1 60); do
+    port_open && return 0
+    kill -0 "$pid" 2>/dev/null || return 1
     sleep 1
   done
-  if [ -z "$started" ]; then
-    echo "mysqld failed to start within 120s." >&2
-    echo "--- /tmp/mysqld.log (error log) ---" >&2
-    sudo cat /tmp/mysqld.log >&2 2>/dev/null || echo "(empty)" >&2
-    echo "--- /tmp/mysqld-stdio.log ---" >&2
-    cat /tmp/mysqld-stdio.log >&2 2>/dev/null || echo "(empty)" >&2
-    exit 1
+  return 1
+}
+
+if ! port_open; then
+  prepare_rundir
+  echo "Starting mysqld for setup..."
+  if ! try_start_mysqld; then
+    # A data directory captured from a hot snapshot can be unreadable on the
+    # build's overlay filesystem (InnoDB OS error 22 on close). Reinitialize a
+    # clean data directory; the schema and data are recreated below.
+    echo "mysqld did not start with the existing data dir; reinitializing." >&2
+    sudo cat /tmp/mysqld.log >&2 2>/dev/null || true
+    for pid in $(pgrep -x mysqld 2>/dev/null); do sudo kill -9 "$pid" 2>/dev/null || true; done
+    sleep 2
+    sudo rm -rf /var/lib/mysql
+    sudo mkdir -p /var/lib/mysql
+    sudo chown mysql:mysql /var/lib/mysql
+    sudo rm -f /tmp/mysqld.log 2>/dev/null || true
+    sudo mysqld --initialize-insecure "${MYSQLD_ARGS[@]}"
+    prepare_rundir
+    if ! try_start_mysqld; then
+      echo "mysqld failed to start after reinitialization." >&2
+      echo "--- /tmp/mysqld.log (error log) ---" >&2
+      sudo cat /tmp/mysqld.log >&2 2>/dev/null || echo "(empty)" >&2
+      echo "--- /tmp/mysqld-stdio.log ---" >&2
+      cat /tmp/mysqld-stdio.log >&2 2>/dev/null || echo "(empty)" >&2
+      exit 1
+    fi
   fi
+  echo "mysqld is ready"
 fi
 
 # --- 3. Configure root password + database (idempotent) ---
-# Fresh installs authenticate root via auth_socket (sudo mysql). Once the
-# password is set, re-runs authenticate over TCP instead.
+# Connect via whichever auth currently works: auth_socket, a freshly
+# initialized empty password, or the already-configured password.
 run_sql() {
   if sudo mysql -e "SELECT 1" >/dev/null 2>&1; then
     sudo mysql "$@"
+  elif mysql --protocol=tcp -h127.0.0.1 -uroot -e "SELECT 1" >/dev/null 2>&1; then
+    mysql --protocol=tcp -h127.0.0.1 -uroot "$@"
   else
     mysql --protocol=tcp -h127.0.0.1 -uroot -p"$MYSQL_PASSWORD" "$@"
   fi
