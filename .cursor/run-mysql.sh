@@ -1,32 +1,23 @@
 #!/usr/bin/env bash
 # Runs MySQL in the foreground so this terminal owns and supervises it.
-# Memory-limiting flags keep the daemon within the container's cgroup limit
-# (default buffers get it OOM-killed).
+# The data directory lives on a loopback ext4 image (see lib-mysql.sh) so
+# InnoDB's O_DIRECT probe works regardless of the pod's host filesystem.
 set -euo pipefail
 
-port_open() { timeout 2 bash -c ': >/dev/tcp/127.0.0.1/3306' 2>/dev/null; }
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib-mysql.sh"
 
-if port_open; then
+if mysql_port_open; then
   echo "MySQL is already running; tailing its error log."
   exec sudo tail -n +1 -F /var/log/mysql/error.log
 fi
 
-# /var/run is tmpfs (cleared each boot); recreate it and drop stale runtime
-# files that a snapshot may have captured while MySQL was running.
-sudo mkdir -p /var/run/mysqld
-sudo chown mysql:mysql /var/run/mysqld
-sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
-           /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
-           /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
+mysql_ensure_mount
+mysql_prepare_rundir
 
-echo "Starting MySQL (foreground)..."
-# Disable InnoDB native AIO / O_DIRECT: the container's overlay filesystem
-# does not support them (OS error 22). Small buffers keep memory low.
-exec sudo mysqld \
-  --user=mysql \
-  --innodb-use-native-aio=0 \
-  --innodb-flush-method=fsync \
-  --innodb-buffer-pool-size=64M \
-  --innodb-buffer-pool-instances=1 \
-  --performance-schema=OFF \
-  --skip-mysqlx
+if ! mysql_datadir_initialized; then
+  echo "Initializing fresh MySQL data directory at $MYSQL_DATADIR..."
+  sudo mysqld --initialize-insecure "${MYSQLD_ARGS[@]}"
+fi
+
+echo "Starting MySQL (foreground) with datadir $MYSQL_DATADIR..."
+exec sudo mysqld "${MYSQLD_ARGS[@]}"
