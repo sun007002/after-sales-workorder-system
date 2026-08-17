@@ -26,19 +26,25 @@ if ! port_open; then
   sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
              /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
              /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
-  # Launch mysqld in a detached session and poll for readiness. `--daemonize`
-  # is avoided on purpose: it fails with MY-011065 in nested containers.
-  # All fds are redirected so the daemon never keeps this script's stdout
-  # pipe open (which would hang callers that capture output).
-  sudo setsid bash -c 'mysqld --user=mysql >>/var/log/mysql/manual-start.log 2>&1' </dev/null >/dev/null 2>&1 &
+  sudo rm -f /var/log/mysql/manual-start.log 2>/dev/null || true
+  echo "Starting mysqld for setup..."
+  # Launch mysqld as root (so it can write its log under /var/log/mysql) and
+  # fully redirect its fds inside the root shell, then background it there so
+  # it is reparented to init. This keeps it off this script's stdout pipe
+  # (avoids hanging the build's output capture) and off --daemonize (which
+  # fails with MY-011065 in nested containers).
+  sudo bash -c 'nohup mysqld --user=mysql >/var/log/mysql/manual-start.log 2>&1 </dev/null &'
   started=""
-  for _ in $(seq 1 120); do
-    if port_open; then started="yes"; break; fi
+  for i in $(seq 1 120); do
+    if port_open; then started="yes"; echo "mysqld ready after ${i}s"; break; fi
     sleep 1
   done
   if [ -z "$started" ]; then
-    echo "mysqld failed to start; recent error log:" >&2
-    sudo tail -n 40 /var/log/mysql/error.log >&2 2>/dev/null || true
+    echo "mysqld failed to start within 120s." >&2
+    echo "--- /var/log/mysql/manual-start.log ---" >&2
+    sudo cat /var/log/mysql/manual-start.log >&2 2>/dev/null || echo "(no manual-start.log)" >&2
+    echo "--- /var/log/mysql/error.log (tail) ---" >&2
+    sudo tail -n 30 /var/log/mysql/error.log >&2 2>/dev/null || true
     exit 1
   fi
 fi

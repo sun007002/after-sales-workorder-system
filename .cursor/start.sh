@@ -15,15 +15,17 @@ start_mysql() {
   sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
              /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
              /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
-  # Launch mysqld in a detached session and poll for readiness. `--daemonize`
-  # is avoided on purpose: it fails with MY-011065 in nested containers.
-  # All fds are redirected so the daemon never keeps this script's stdout
-  # pipe open (which would hang callers that capture output).
-  sudo setsid bash -c 'mysqld --user=mysql >>/var/log/mysql/manual-start.log 2>&1' </dev/null >/dev/null 2>&1 &
+  # Launch mysqld as root (so it can write its log under /var/log/mysql) and
+  # fully redirect its fds inside the root shell, then background it there so
+  # it is reparented to init. This keeps it off this script's stdout pipe and
+  # off --daemonize (which fails with MY-011065 in nested containers).
+  sudo bash -c 'nohup mysqld --user=mysql >/var/log/mysql/manual-start.log 2>&1 </dev/null &'
   for _ in $(seq 1 120); do
     port_open && return 0
     sleep 1
   done
+  echo "mysqld did not become ready; recent log:" >&2
+  sudo cat /var/log/mysql/manual-start.log >&2 2>/dev/null || true
   return 1
 }
 
