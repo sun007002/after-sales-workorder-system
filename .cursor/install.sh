@@ -16,20 +16,23 @@ if ! command -v mysqld >/dev/null 2>&1; then
   sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq mysql-server
 fi
 
-# --- 2. Start a temporary MySQL instance for setup steps ---
-sudo mkdir -p /var/run/mysqld
-sudo chown mysql:mysql /var/run/mysqld
-if ! mysqladmin -uroot -p"$MYSQL_PASSWORD" -h127.0.0.1 ping >/dev/null 2>&1 \
-   && ! sudo mysqladmin ping >/dev/null 2>&1; then
-  sudo setsid mysqld_safe >/tmp/mysqld-install.log 2>&1 < /dev/null &
-fi
-for _ in $(seq 1 60); do
-  if sudo mysqladmin ping >/dev/null 2>&1 \
-     || mysqladmin -uroot -p"$MYSQL_PASSWORD" -h127.0.0.1 ping >/dev/null 2>&1; then
-    break
+# --- 2. Ensure a MySQL instance is running for the setup steps below ---
+# /var/run is tmpfs (cleared each boot); recreate it and clear stale runtime
+# files that a snapshot may have captured while MySQL was running.
+port_open() { timeout 2 bash -c ': >/dev/tcp/127.0.0.1/3306' 2>/dev/null; }
+if ! port_open; then
+  sudo mkdir -p /var/run/mysqld
+  sudo chown mysql:mysql /var/run/mysqld
+  sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
+             /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
+             /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
+  # --daemonize returns only once the server is ready to accept connections.
+  if ! sudo mysqld --daemonize --user=mysql; then
+    echo "mysqld failed to start; recent error log:" >&2
+    sudo tail -n 40 /var/log/mysql/error.log >&2 2>/dev/null || true
+    exit 1
   fi
-  sleep 1
-done
+fi
 
 # --- 3. Configure root password + database (idempotent) ---
 # Fresh installs authenticate root via auth_socket (sudo mysql). Once the
@@ -38,7 +41,7 @@ run_sql() {
   if sudo mysql -e "SELECT 1" >/dev/null 2>&1; then
     sudo mysql "$@"
   else
-    mysql -uroot -p"$MYSQL_PASSWORD" -h127.0.0.1 "$@"
+    mysql --protocol=tcp -h127.0.0.1 -uroot -p"$MYSQL_PASSWORD" "$@"
   fi
 }
 run_sql <<SQL

@@ -5,24 +5,39 @@ set -euo pipefail
 
 MYSQL_PASSWORD="rootpassword"
 
-sudo mkdir -p /var/run/mysqld
-sudo chown mysql:mysql /var/run/mysqld
+port_open() { timeout 2 bash -c ': >/dev/tcp/127.0.0.1/3306' 2>/dev/null; }
 
-is_ready() {
-  mysqladmin -uroot -p"$MYSQL_PASSWORD" -h127.0.0.1 ping >/dev/null 2>&1
+ensure_mysql_up() {
+  # Already listening? Nothing to do.
+  if port_open; then
+    return 0
+  fi
+  # /var/run is tmpfs and is cleared on each boot; recreate it and drop any
+  # stale pid/socket left over from a snapshot taken while MySQL was running.
+  sudo mkdir -p /var/run/mysqld
+  sudo chown mysql:mysql /var/run/mysqld
+  sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
+             /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
+             /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
+  # --daemonize returns only once the server is ready to accept connections.
+  sudo mysqld --daemonize --user=mysql
 }
 
-if ! is_ready; then
-  sudo setsid mysqld_safe >/tmp/mysqld.log 2>&1 < /dev/null &
-  for _ in $(seq 1 60); do
-    is_ready && break
-    sleep 1
-  done
-fi
-
-if is_ready; then
-  echo "MySQL is ready"
-else
-  echo "MySQL failed to become ready; see /tmp/mysqld.log" >&2
+if ! ensure_mysql_up; then
+  echo "MySQL failed to start; recent error log:" >&2
+  sudo tail -n 40 /var/log/mysql/error.log >&2 2>/dev/null || true
   exit 1
 fi
+
+# Confirm readiness over TCP (the transport Prisma uses).
+for _ in $(seq 1 30); do
+  if mysqladmin --protocol=tcp -h127.0.0.1 -uroot -p"$MYSQL_PASSWORD" ping >/dev/null 2>&1; then
+    echo "MySQL is ready"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "MySQL did not become ready over TCP; recent error log:" >&2
+sudo tail -n 40 /var/log/mysql/error.log >&2 2>/dev/null || true
+exit 1
