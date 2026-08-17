@@ -26,8 +26,17 @@ if ! port_open; then
   sudo rm -f /var/run/mysqld/mysqld.pid /var/run/mysqld/mysqld.sock \
              /var/run/mysqld/mysqld.sock.lock /var/run/mysqld/mysqlx.sock \
              /var/run/mysqld/mysqlx.sock.lock 2>/dev/null || true
-  # --daemonize returns only once the server is ready to accept connections.
-  if ! sudo mysqld --daemonize --user=mysql; then
+  # Launch mysqld in a detached session and poll for readiness. `--daemonize`
+  # is avoided on purpose: it fails with MY-011065 in nested containers.
+  # All fds are redirected so the daemon never keeps this script's stdout
+  # pipe open (which would hang callers that capture output).
+  sudo setsid bash -c 'mysqld --user=mysql >>/var/log/mysql/manual-start.log 2>&1' </dev/null >/dev/null 2>&1 &
+  started=""
+  for _ in $(seq 1 120); do
+    if port_open; then started="yes"; break; fi
+    sleep 1
+  done
+  if [ -z "$started" ]; then
     echo "mysqld failed to start; recent error log:" >&2
     sudo tail -n 40 /var/log/mysql/error.log >&2 2>/dev/null || true
     exit 1
