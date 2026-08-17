@@ -1,0 +1,22 @@
+{
+  "name": "After-Sales Work Order System",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "cd server && npm run dev",
+      "description": "Express + Prisma API on http://localhost:3000 (nodemon)"
+    },
+    {
+      "name": "frontend",
+      "command": "cd client && npm run dev",
+      "description": "Vite React dev server on http://localhost:5173 (proxies /api to :3000)"
+    }
+  ],
+  "ports": [
+    { "name": "frontend", "port": 5173 },
+    { "name": "backend", "port": 3000 }
+  ]
+}
