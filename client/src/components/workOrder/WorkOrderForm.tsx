@@ -14,6 +14,8 @@ import {
   Autocomplete,
   Typography,
   InputAdornment,
+  IconButton,
+  Tooltip,
   CircularProgress,
   FormControlLabel,
   Switch,
@@ -21,9 +23,11 @@ import {
   AlertTitle,
   Divider,
 } from '@mui/material';
+import CalculateIcon from '@mui/icons-material/Calculate';
 import { useSnackbar } from 'notistack';
 import { useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
+import CalculatorPopover from '../common/CalculatorPopover';
 import { getCustomerList } from '../../api/customer.api';
 import { getContacts } from '../../api/customer.api';
 import { getStaffList } from '../../api/staff.api';
@@ -48,6 +52,9 @@ export interface WorkOrderFormProps {
   onCancel: () => void;
 }
 
+/** Current local time formatted for a datetime-local input. */
+const nowLocalDateTime = (): string => dayjs().format('YYYY-MM-DDTHH:mm');
+
 /**
  * Work order form with customer→contact cascade, auto-fill phone,
  * auto-calculate total amount, and multi-select staff.
@@ -62,7 +69,8 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
   const [contactId, setContactId] = useState<number | null>(null);
   const [contactPhone, setContactPhone] = useState('');
   const [staffNames, setStaffNames] = useState<string[]>([]);
-  const [startTime, setStartTime] = useState('');
+  // New work orders default the start time to now; edit mode loads the saved value.
+  const [startTime, setStartTime] = useState(isEdit ? '' : nowLocalDateTime());
   const [endTime, setEndTime] = useState('');
   const [description, setDescription] = useState('');
   const [laborCost, setLaborCost] = useState('0');
@@ -73,6 +81,9 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
   const [createdAt, setCreatedAt] = useState('');
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(isEdit);
+
+  // Anchor for the labor-cost calculator popover.
+  const [calcAnchor, setCalcAnchor] = useState<HTMLElement | null>(null);
 
   // Post-create attachment state (Bug 2: upload files on the create page).
   const [createdId, setCreatedId] = useState<number | null>(null);
@@ -169,7 +180,7 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
     setContactId(null);
     setContactPhone('');
     setStaffNames([]);
-    setStartTime('');
+    setStartTime(nowLocalDateTime());
     setEndTime('');
     setDescription('');
     setLaborCost('0');
@@ -446,7 +457,30 @@ const WorkOrderForm: React.FC<WorkOrderFormProps> = ({ workOrderId, onSuccess, o
             onChange={(e) => setLaborCost(e.target.value)}
             InputProps={{
               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              endAdornment: (
+                <InputAdornment position="end">
+                  <Tooltip title="计算器">
+                    <IconButton
+                      edge="end"
+                      size="small"
+                      aria-label="打开计算器"
+                      onClick={(e) => setCalcAnchor(e.currentTarget)}
+                    >
+                      <CalculateIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </InputAdornment>
+              ),
               inputProps: { min: 0, max: MAX_COST, step: '0.01' },
+            }}
+          />
+          <CalculatorPopover
+            open={Boolean(calcAnchor)}
+            anchorEl={calcAnchor}
+            onClose={() => setCalcAnchor(null)}
+            onConfirm={(value) => {
+              const num = Math.min(parseFloat(value) || 0, MAX_COST);
+              setLaborCost(String(num));
             }}
           />
         </Grid>
